@@ -1,0 +1,102 @@
+[
+  {
+    "id": 1,
+    "price": 18200,
+    "date": "2026-07-11",
+    "speaker": "Нифонтов Д.Ю.",
+    "title": "Новая методика ценообразования и учёта затрат на обслуживание газового оборудования в ЖКХ",
+    "link_participant": "https://edu.vsesem.ru/2026/17fv.html",
+    "link_recording": "",
+    "direction": "ГАЗ"
+  },
+  {
+    "id": 2,
+    "price": 15600,
+    "date": "2026-07-09",
+    "speaker": "Кадыров Ф.Н.",
+    "title": "Правила оказания платных медицинских услуг: новые возможности и ограничения",
+    "link_participant": "https://edu.vsesem.ru/2026/9wku.html",
+    "link_recording": "",
+    "direction": "ЗДРАВ"
+  },
+  {
+    "id": 3,
+    "price": 0,
+    "date": "2026-07-18",
+    "speaker": "Беляева Н.С.",
+    "title": "Практика обращения с промышленными отходами: новые требования к производителям",
+    "link_participant": "https://edu.vsesem.ru/2026/1hkf.html",
+    "link_recording": "",
+    "direction": "ЭКОЛОГИЯ"
+  },
+  {
+    "id": 4,
+    "price": 16700,
+    "date": "2026-07-25",
+    "speaker": "Паромов А.О.",
+    "title": "Интеллектуальные системы учёта электроэнергии: новые требования и расходы",
+    "link_participant": "https://edu.vsesem.ru/2026/s7s3.html",
+    "link_recording": "",
+    "direction": "ЭЛЕКТРО"
+  },
+  {
+    "id": 5,
+    "price": 16800,
+    "date": "2026-07-30",
+    "speaker": "Корякин В.И.",
+    "title": "Земли сельхозназначения: новые условия использования, оборота и перевода",
+    "link_participant": "https://edu.vsesem.ru/2026/ujpz.html",
+    "link_recording": "",
+    "direction": "ЗЕМЛЯ"
+  },
+  {
+    "id": 6,
+    "price": 17200,
+    "date": "2026-07-08",
+    "speaker": "Алибегов Р.К.",
+    "title": "Концессионные соглашения в коммунальной сфере: новые условия заключения",
+    "link_participant": "https://edu.vsesem.ru/2026/zuw3.html",
+    "link_recording": "",
+    "direction": "ЖКХ"
+  },
+  {
+    "id": 7,
+    "price": 19900,
+    "date": "2026-08-05",
+    "speaker": "Смирнова Е.П.",
+    "title": "Гособоронзаказ: разбор новых правил и типовых ошибок исполнителей",
+    "link_participant": "https://edu.vsesem.ru/2026/goz.html",
+    "link_recording": "",
+    "direction": "ГОЗ"
+  },
+  {
+    "id": 8,
+    "price": 15800,
+    "date": "2026-06-20",
+    "speaker": "Будницкий Д.М.",
+    "title": "Правила контроля сточных вод предприятий (прошедший вебинар этого года)",
+    "link_participant": "https://edu.vsesem.ru/2026/kx5n.html",
+    "link_recording": "https://edu.vsesem.ru/2026/rec.html",
+    "direction": "ЭКОЛОГИЯ"
+  },
+  {
+    "id": 9,
+    "price": 14500,
+    "date": "2025-11-12",
+    "speaker": "Потапова В.С.",
+    "title": "Тарифы на обращение с ТКО: итоги 2025 года (прошлогодний вебинар)",
+    "link_participant": "https://edu.vsesem.ru/2025/vl9r.html",
+    "link_recording": "https://edu.vsesem.ru/2025/rec.html",
+    "direction": "СТРОИТЕЛЬСТВО"
+  },
+  {
+    "id": 10,
+    "price": 13900,
+    "date": "2025-09-03",
+    "speaker": "Кадыров Ф.Н.",
+    "title": "Стандарты медицинской помощи: обновления 2025 (прошлогодний вебинар)",
+    "link_participant": "https://edu.vsesem.ru/2025/med.html",
+    "link_recording": "",
+    "direction": "ЗДРАВ"
+  }
+]
