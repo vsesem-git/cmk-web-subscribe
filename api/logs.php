@@ -8,15 +8,23 @@ declare(strict_types=1);
 require_once BASE_DIR . '/lib/logs.php';
 require_once BASE_DIR . '/lib/mailer.php';
 
-/** Отдать CSV-файл и выйти. */
+/** Escape spreadsheet formulas and stream a CSV file. */
+function csv_safe_value($value): string
+{
+    $text = (string)$value;
+    if (preg_match('/^[\\x00-\\x20]*[=+@-]/', $text)) return "'" . $text;
+    return $text;
+}
+
 function csv_download(string $filename, array $header, array $rows): void
 {
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    echo "\xEF\xBB\xBF"; // BOM для корректной кириллицы в Excel
+    header('Content-Disposition: attachment; filename="' . basename($filename) . '"');
+    header('X-Content-Type-Options: nosniff');
+    echo "\xEF\xBB\xBF";
     $out = fopen('php://output', 'w');
-    fputcsv($out, $header, ';');
-    foreach ($rows as $r) fputcsv($out, $r, ';');
+    fputcsv($out, array_map('csv_safe_value', $header), ';');
+    foreach ($rows as $row) fputcsv($out, array_map('csv_safe_value', $row), ';');
     fclose($out);
     exit;
 }

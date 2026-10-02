@@ -1,0 +1,3 @@
+# Runtime data is never served directly.
+Options -Indexes
+Require all denied

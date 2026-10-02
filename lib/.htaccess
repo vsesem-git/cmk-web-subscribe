@@ -1,0 +1,3 @@
+# PHP source libraries are included by PHP, never requested directly.
+Options -Indexes
+Require all denied

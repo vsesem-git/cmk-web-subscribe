@@ -12,8 +12,10 @@ $csrf = csrf_token();
 <meta name="csrf-token" content="<?= h($csrf) ?>">
 <title>Вебинары для подписчиков — <?= h(BRAND_SHORT) ?></title>
 <link rel="stylesheet" href="<?= h(asset('assets/app.css')) ?>">
+<link rel="stylesheet" href="<?= h(asset('assets/redesign.css')) ?>">
 </head>
 <body>
+<a class="skip-link" href="#main-content">Перейти к расписанию</a>
 
   <!-- ===== Экран входа ===== -->
   <div class="login-screen" id="login-screen">
@@ -24,13 +26,17 @@ $csrf = csrf_token();
         <p><?= h(BRAND_FULL) ?></p>
       </div>
       <div class="login-card__body">
+        <div class="setup-note hidden" id="setup-note" role="status">
+          <b>Требуется первичная настройка</b>
+          <span>Создайте администратора на сервере командой <code>php scripts/create_admin.php</code>, затем обновите страницу.</span>
+        </div>
         <form id="login-form">
           <label for="li-login">Логин</label>
           <input type="text" id="li-login" autocomplete="username" spellcheck="false" required>
           <label for="li-pass">Пароль</label>
           <input type="password" id="li-pass" autocomplete="current-password" required>
           <button class="login-btn" type="submit">Войти</button>
-          <div class="login-err" id="login-err"></div>
+          <div class="login-err" id="login-err" role="alert" aria-live="polite"></div>
         </form>
       </div>
     </div>
@@ -61,21 +67,21 @@ $csrf = csrf_token();
     </div>
   </header>
 
-  <main class="wrap">
+  <main class="wrap" id="main-content">
     <div class="toolbar">
       <label class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input id="search" type="search" placeholder="Поиск по теме или лектору…" autocomplete="off">
+        <input id="search" type="search" placeholder="Тема, лектор, дата (17.05.2026)" autocomplete="off" aria-label="Поиск по теме, лектору или дате">
       </label>
       <div class="sort-ctl">
         <span class="sort-label">Сортировка</span>
-        <select id="sort-key" class="sort-select">
+        <select id="sort-key" class="sort-select" aria-label="Сортировать вебинары">
           <option value="date">по дате</option>
           <option value="speaker">по лектору</option>
           <option value="title">по теме</option>
           <option value="price">по цене</option>
         </select>
-        <button class="sort-dir" id="sort-dir" title="Порядок" aria-label="Порядок сортировки">
+        <button class="sort-dir" id="sort-dir" title="Сначала ближайшие" aria-label="Сначала ближайшие">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 11l6-6 6 6"/></svg>
         </button>
       </div>
@@ -99,17 +105,39 @@ $csrf = csrf_token();
       <span id="soon-text"></span>
     </div>
 
-    <!-- Переключатель периода -->
-    <div class="periods" id="periods"></div>
+    <!-- Период и направление в одной строке -->
+    <div class="filters-row">
+      <div class="periods" id="periods" role="group" aria-label="Фильтр по периоду"></div>
+      <span class="filter-divider" aria-hidden="true"></span>
+      <div class="category-filter" id="category-filter">
+        <button class="category-toggle" id="category-toggle" type="button" aria-expanded="false" aria-controls="chips" aria-label="Открыть фильтр по направлениям">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          <span>Направления</span>
+          <span class="category-current" id="category-current">Все</span>
+          <svg class="category-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="chips" id="chips" role="group" aria-label="Фильтр по направлению"></div>
+      </div>
+    </div>
 
-    <!-- Фильтр по направлению -->
-    <div class="chips" id="chips"></div>
+    <!-- Краткие результаты и применение сохранённого фильтра -->
+    <div class="results-toolbar">
+      <div class="results-summary">
+        <span class="results-count" id="results-count" role="status" aria-live="polite"></span>
+        <button class="clear-filters hidden" id="clear-filters" type="button">Сбросить фильтры</button>
+      </div>
+      <label class="quick-presets hidden" id="quick-presets" for="preset-select">
+        <span>Пресет</span>
+        <select class="select" id="preset-select" aria-label="Применить сохранённый фильтр">
+          <option value="">Сохранённые фильтры</option>
+        </select>
+      </label>
+    </div>
 
-    <!-- Пользовательские пресеты фильтров -->
-    <div class="presets-bar" id="presets-bar"></div>
+    <div id="state-main" class="state hidden" role="status" aria-live="polite"></div>
 
     <!-- Блоки вебинаров (рендерятся из JS в зависимости от выбранного периода) -->
-    <div id="panels"></div>
+    <div id="panels" role="region" aria-label="Список вебинаров"></div>
   </main>
 
   <footer>© <?= date('Y') ?> <?= h(BRAND_FULL) ?> (<?= h(BRAND_SHORT) ?>) — вебинары для подписчиков</footer>

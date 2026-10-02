@@ -1,0 +1,20 @@
+# Apache 2.4+ hardening. Nginx deployments must apply equivalent rules (see README).
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Never expose runtime data, source-only directories, setup tools, or VCS metadata.
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+  RewriteRule ^(?:data|lib|vendor|scripts|\.git)(?:/|$) - [F,L,NC]
+  RewriteRule ^config\.php$ - [F,L,NC]
+  # Block common secret, backup, cache and log formats anywhere below the web root.
+  RewriteRule \.(?:jsonl?|log|ini|env|bak|old|orig|sql|tmp|swp)$ - [F,L,NC]
+</IfModule>
+
+<FilesMatch "^(?:\.env|\.htaccess|\.git.*|config\.php)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+</IfModule>

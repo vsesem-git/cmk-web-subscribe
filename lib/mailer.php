@@ -20,8 +20,16 @@ function send_mail(string $toEmail, string $toName, string $subject, string $htm
     $s = settings_get();
     $smtp = $s['smtp'] ?? [];
 
-    if (empty($smtp['host']) || empty($smtp['from_email'])) {
+    $host = trim((string)($smtp['host'] ?? ''));
+    $fromEmail = trim((string)($smtp['from_email'] ?? ''));
+    $port = (int)($smtp['port'] ?? 465);
+    $secure = strtolower((string)($smtp['secure'] ?? 'ssl'));
+    if ($host === '' || $fromEmail === '') {
         return ['ok' => false, 'error' => 'SMTP не настроен. Заполните настройки в разделе «Настройки».'];
+    }
+    if (strlen($host) > 253 || preg_match('/[\\s\\r\\n\\x00]/', $host) || $port < 1 || $port > 65535
+        || !in_array($secure, ['ssl', 'tls'], true) || !is_email($fromEmail)) {
+        return ['ok' => false, 'error' => 'Некорректные параметры SMTP. Проверьте настройки почты.'];
     }
     if (!is_email($toEmail)) {
         return ['ok' => false, 'error' => 'Некорректный email получателя.'];
@@ -30,30 +38,22 @@ function send_mail(string $toEmail, string $toName, string $subject, string $htm
     $mail = new PHPMailer(true);
     try {
         $mail->isSMTP();
-        $mail->Host       = (string)$smtp['host'];
+        $mail->Host       = $host;
         $mail->SMTPAuth   = !empty($smtp['user']);
         $mail->Username   = (string)($smtp['user'] ?? '');
         $mail->Password   = (string)($smtp['pass'] ?? '');
-        $mail->Port       = (int)($smtp['port'] ?? 465);
+        $mail->Port       = $port;
+        $mail->Timeout    = 10;
         $mail->CharSet    = 'UTF-8';
         $mail->Encoding   = 'base64';
-
-        $secure = strtolower((string)($smtp['secure'] ?? 'ssl'));
-        if ($secure === 'tls') {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        } elseif ($secure === 'ssl') {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        } else {
-            $mail->SMTPSecure = false;
-            $mail->SMTPAutoTLS = false;
-        }
+        $mail->SMTPSecure = $secure === 'tls' ? PHPMailer::ENCRYPTION_STARTTLS : PHPMailer::ENCRYPTION_SMTPS;
         // Строгая проверка сертификата (защита от MITM)
         $mail->SMTPOptions = ['ssl' => [
             'verify_peer' => true, 'verify_peer_name' => true, 'allow_self_signed' => false,
         ]];
 
-        $fromName = (string)($smtp['from_name'] ?? MAIL_FROM_NAME);
-        $mail->setFrom((string)$smtp['from_email'], $fromName);
+        $fromName = preg_replace('/[\\r\\n\\x00-\\x1F\\x7F]/', ' ', (string)($smtp['from_name'] ?? MAIL_FROM_NAME));
+        $mail->setFrom($fromEmail, substr($fromName ?: MAIL_FROM_NAME, 0, 120));
         $mail->addReplyTo((string)$smtp['from_email'], $fromName);
         $mail->addAddress($toEmail, $toName ?: $toEmail);
 
@@ -65,8 +65,10 @@ function send_mail(string $toEmail, string $toName, string $subject, string $htm
         $mail->send();
         return ['ok' => true];
     } catch (MailException $e) {
-        return ['ok' => false, 'error' => 'Ошибка отправки: ' . $mail->ErrorInfo];
+        error_log('SMTP delivery failed: ' . substr((string)$mail->ErrorInfo, 0, 500));
+        return ['ok' => false, 'error' => 'Не удалось отправить письмо. Проверьте настройки SMTP или обратитесь к администратору.'];
     } catch (\Throwable $e) {
-        return ['ok' => false, 'error' => 'Ошибка отправки письма.'];
+        error_log('Unexpected mailer failure: ' . substr($e->getMessage(), 0, 500));
+        return ['ok' => false, 'error' => 'Не удалось отправить письмо. Проверьте настройки SMTP или обратитесь к администратору.'];
     }
 }

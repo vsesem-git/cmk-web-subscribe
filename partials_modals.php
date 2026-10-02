@@ -2,9 +2,9 @@
 
 <!-- ===== Настройки (админ) ===== -->
 <div class="modal-overlay" id="modal-overlay" aria-hidden="true">
-  <div class="modal modal--wide" id="modal-box" role="dialog" aria-modal="true">
+  <div class="modal modal--wide" id="modal-box" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
     <div class="modal__head">
-      <h3>Настройки</h3>
+      <h3 id="settings-modal-title">Настройки</h3>
       <button class="modal__close" id="modal-close" aria-label="Закрыть">&times;</button>
     </div>
     <div class="tabs" id="tabs">
@@ -27,7 +27,7 @@
           <div class="fld full"><label>SMTP-хост</label><input class="input" id="sm-host" placeholder="smtp.yandex.ru"></div>
           <div class="fld"><label>Порт</label><input class="input" id="sm-port" type="number" value="465"></div>
           <div class="fld"><label>Шифрование</label>
-            <select class="select" id="sm-secure"><option value="ssl">SSL</option><option value="tls">STARTTLS</option><option value="none">Без шифрования</option></select>
+            <select class="select" id="sm-secure"><option value="ssl">SSL</option><option value="tls">STARTTLS</option></select>
           </div>
           <div class="fld"><label>Логин SMTP</label><input class="input" id="sm-user" autocomplete="off"></div>
           <div class="fld"><label>Пароль SMTP</label><input class="input" id="sm-pass" type="password" autocomplete="new-password" placeholder="••••••"></div>
@@ -75,6 +75,14 @@
           <button data-preset="normal">Обычный</button>
           <button data-preset="large">Крупный</button>
         </div>
+
+        <h4 class="cf-title">Сохранённые фильтры каталога</h4>
+        <div class="hintbox">Здесь можно управлять пресетами, которые появляются в списке над вебинарами. Чтобы сохранить фильтр, сначала задайте период, направление и поиск в каталоге, затем введите название.</div>
+        <div class="preset-create-row">
+          <label class="fld" for="preset-name"><span>Название пресета</span><input class="input" id="preset-name" maxlength="40" placeholder="Например, ЖКХ — предстоящие"></label>
+          <button class="mbtn mbtn--primary" id="preset-save" type="button">Сохранить текущий фильтр</button>
+        </div>
+        <div class="preset-settings-list" id="preset-list"></div>
 
         <div class="view-row" style="margin-top:16px">
           <span class="vlabel">Плотность строк</span>
@@ -325,19 +333,19 @@
 
 <!-- ===== Создание/редактирование пользователя ===== -->
 <div class="modal-overlay" id="user-overlay" aria-hidden="true" style="z-index:120">
-  <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
     <div class="modal__head">
       <h3 id="user-modal-title">Новый пользователь</h3>
       <button class="modal__close" id="user-modal-close" aria-label="Закрыть">&times;</button>
     </div>
     <div class="modal__body">
       <div class="form-grid">
-        <div class="fld"><label>Логин</label><input class="input" id="ef-login" spellcheck="false"></div>
-        <div class="fld"><label>Пароль <span class="hint-inline">(пусто = не менять)</span></label>
-          <div style="display:flex;gap:8px"><input class="input" id="ef-pass" spellcheck="false"><button class="mbtn" id="ef-genpass" type="button" title="Сгенерировать">⟳</button></div>
+        <div class="fld"><label for="ef-login">Логин</label><input class="input" id="ef-login" autocomplete="username" spellcheck="false"></div>
+        <div class="fld"><label for="ef-pass">Пароль <span class="hint-inline">(12+ символов; пусто = не менять)</span></label>
+          <div style="display:flex;gap:8px"><input class="input" id="ef-pass" type="password" autocomplete="new-password" spellcheck="false"><button class="mbtn" id="ef-showpass" type="button" aria-pressed="false">Показать</button><button class="mbtn" id="ef-genpass" type="button" title="Сгенерировать пароль">⟳</button></div>
         </div>
-        <div class="fld full"><label>Организация</label><input class="input" id="ef-org"></div>
-        <div class="fld full"><label>Email</label><input class="input" id="ef-email" type="email" placeholder="user@example.com"></div>
+        <div class="fld full"><label for="ef-org">Организация</label><input class="input" id="ef-org" maxlength="160"></div>
+        <div class="fld full"><label for="ef-email">Email</label><input class="input" id="ef-email" type="email" maxlength="254" placeholder="user@example.com"></div>
         <div class="fld"><label>Роль</label><select class="select" id="ef-role"><option value="user">Пользователь</option><option value="admin">Администратор</option></select></div>
         <div class="fld"><label>Действует до</label><input class="input" type="date" id="ef-expires"></div>
         <div class="fld full"><label>Доступные направления</label><div class="catcheck" id="ef-cats"></div></div>
@@ -353,19 +361,19 @@
 
 <!-- ===== Письмо: доступ / приглашение ===== -->
 <div class="modal-overlay" id="mail-overlay" aria-hidden="true" style="z-index:130">
-  <div class="modal modal--wide" role="dialog" aria-modal="true">
+  <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="mail-modal-title">
     <div class="modal__head">
       <h3 id="mail-modal-title">Отправить письмо</h3>
       <button class="modal__close" id="mail-modal-close" aria-label="Закрыть">&times;</button>
     </div>
     <div class="modal__body">
       <div class="form-grid" style="grid-template-columns:1fr auto;align-items:end;margin-bottom:14px">
-        <div class="fld"><label>Email получателя</label><input class="input" id="mail-to" type="email" placeholder="recipient@example.com"></div>
-        <div class="fld"><label>&nbsp;</label><button class="mbtn mbtn--primary" id="mail-send">Отправить</button></div>
+        <div class="fld"><label for="mail-to">Email получателя</label><input class="input" id="mail-to" type="email" maxlength="254" placeholder="recipient@example.com"></div>
+        <div class="fld"><span class="hint-inline" aria-hidden="true">&nbsp;</span><button class="mbtn mbtn--primary" id="mail-send" type="button">Отправить</button></div>
       </div>
-      <div class="fld"><label>Тема письма</label><input class="input" id="mail-subject" readonly></div>
+      <div class="fld"><label for="mail-subject">Тема письма</label><input class="input" id="mail-subject" readonly></div>
       <div class="mail-preview-label">Предпросмотр письма:</div>
-      <iframe id="mail-preview" class="mail-preview" title="Предпросмотр письма"></iframe>
+      <iframe id="mail-preview" class="mail-preview" title="Предпросмотр письма" sandbox></iframe>
       <div class="prev-err" id="mail-err"></div>
       <div class="mail-ok" id="mail-ok"></div>
     </div>
@@ -374,7 +382,7 @@
 
 <!-- ===== Мои просмотры (пользователь) / просмотры пользователя (админ) ===== -->
 <div class="modal-overlay" id="views-overlay" aria-hidden="true" style="z-index:125">
-  <div class="modal modal--wide" role="dialog" aria-modal="true">
+  <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="views-title">
     <div class="modal__head">
       <h3 id="views-title">Мои просмотры</h3>
       <button class="modal__close" id="views-close" aria-label="Закрыть">&times;</button>

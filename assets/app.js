@@ -12,6 +12,7 @@ const qs = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const MONTHS_NOMINATIVE = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
 
 let CSRF = (document.querySelector('meta[name="csrf-token"]')||{}).content || "";
 let currentUser = null;
@@ -79,21 +80,72 @@ function applyView(){
     : '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'; }                                                                     // луна
 }
 // Забрать настройки внешнего вида из ответа сервера
+function ingestFeatures(input){
+  const keys=["log_login","log_views","log_mail","btn_access","btn_invite","my_views","timer","viewed_badge","expiry_warn"];
+  const source=input&&typeof input==="object"?input:{};
+  FEATURES={};
+  keys.forEach(k=>{ FEATURES[k]=Object.prototype.hasOwnProperty.call(source,k)?source[k]===true: true; });
+}
 function ingestAppearance(o){
   if(!o) return;
-  if(o.col_fonts && Object.keys(o.col_fonts).length) COL_FONTS=Object.assign(COL_FONTS,o.col_fonts);
-  if(o.col_widths && Object.keys(o.col_widths).length) COL_WIDTHS=Object.assign(COL_WIDTHS,o.col_widths);
-  if(o.view && Object.keys(o.view).length) VIEW=Object.assign(VIEW,o.view);
-  if(Array.isArray(o.columns) && o.columns.length) COLUMNS=o.columns;
-  if(o.field_map && Object.keys(o.field_map).length) FIELD_MAP=o.field_map;
-  if(o.cat_overrides && Object.keys(o.cat_overrides).length) CAT_OVERRIDES=o.cat_overrides;
-  if(Array.isArray(o.presets)) PRESETS_SAVED=o.presets;
+  if(o.features)ingestFeatures(o.features);
+  const bounded=(value,min,max,fallback)=>{
+    const n=Number(value); return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
+  };
+  if(o.col_fonts && typeof o.col_fonts==="object"){
+    ["date","speaker","timer","title","price"].forEach(k=>{COL_FONTS[k]=bounded(o.col_fonts[k],10,28,COL_FONTS[k]);});
+  }
+  if(o.col_widths && typeof o.col_widths==="object"){
+    ["date","speaker","timer","title","price","action"].forEach(k=>{
+      const n=Number(o.col_widths[k]); COL_WIDTHS[k]=Number.isFinite(n)?(n<=0?0:Math.max(60,Math.min(600,n))):COL_WIDTHS[k];
+    });
+  }
+  if(o.view && typeof o.view==="object"){
+    const v=o.view;
+    VIEW={
+      density:["compact","normal","comfortable"].includes(v.density)?v.density:"normal",
+      theme:["light","dark"].includes(v.theme)?v.theme:"light",
+      start_hour:bounded(v.start_hour,0,23,10),
+      mode:["table","cards"].includes(v.mode)?v.mode:"table",
+      page_size:bounded(v.page_size,0,500,0),
+      date_format:typeof v.date_format==="string"&&/^[DMyY .,:\\/-]{1,40}$/.test(v.date_format)?v.date_format:"D MMMM YYYY"
+    };
+  }
+  const allowedColumns=["date","speaker","timer","title","price","action"];
+  if(Array.isArray(o.columns)){
+    const clean=o.columns.filter(c=>c&&allowedColumns.includes(c.key)).map(c=>({key:c.key,label:String(c.label||c.key).slice(0,60),visible:c.visible!==false}));
+    if(clean.length) COLUMNS=clean;
+  }
+  if(o.field_map && typeof o.field_map==="object"){
+    const clean={};
+    ["date","speaker","title","price","direction","link_participant","time","id"].forEach(k=>{
+      const v=o.field_map[k]; clean[k]=typeof v==="string"&&/^[\\p{L}\\p{N}_. -]{1,60}$/u.test(v)?v:k;
+    });
+    FIELD_MAP=clean;
+  }
+  if(o.cat_overrides && typeof o.cat_overrides==="object"){
+    const clean={};
+    Object.keys(CATS).forEach(k=>{
+      const v=o.cat_overrides[k]; if(!v||typeof v!=="object")return;
+      clean[k]={};
+      if(typeof v.color==="string"&&/^#[0-9a-f]{6}$/i.test(v.color))clean[k].color=v.color;
+      if(typeof v.label==="string")clean[k].label=v.label.slice(0,40);
+    });
+    CAT_OVERRIDES=clean;
+  }
+  if(Array.isArray(o.presets)){
+    PRESETS_SAVED=o.presets.slice(0,30).filter(p=>{
+      const period=String(p&&p.period||"");
+      return p&&typeof p.name==="string"&&(["all","upcoming","past"].includes(period)||/^year:\d{4}$/.test(period));
+    }).map(p=>({name:String(p.name).slice(0,40),period:String(p.period),cat:["all","other",...ALL_CAT_KEYS].includes(p.cat)?p.cat:"all",search:String(p.search||"").slice(0,80)}));
+  }
 }
 // Итоговые данные категории с учётом переопределений цвета/подписи
 function catInfo(k){
   const base = CATS[k]||CATS.other;
   const ov = CAT_OVERRIDES[k]||{};
-  return { c: ov.color||base.c, bg: base.bg, label: ov.label||base.label, icon: base.icon };
+  const color = typeof ov.color==="string"&&/^#[0-9a-f]{6}$/i.test(ov.color)?ov.color:base.c;
+  return { c: color, bg: base.bg, label: typeof ov.label==="string"?ov.label.slice(0,40):base.label, icon: base.icon };
 }
 // Применить весь внешний вид разом
 function applyAllAppearance(){ applyColFonts(); applyColWidths(); applyView(); }
@@ -158,18 +210,31 @@ function detectCat(w){
 /* ---------- API-помощник ---------- */
 async function api(action, opts){
   opts = opts || {};
-  const init = { method: opts.method || "GET", headers: {} };
+  const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin", cache: "no-store" };
   if (opts.body){
     init.method = opts.method || "POST";
     init.headers["Content-Type"] = "application/json";
     init.headers["X-CSRF-Token"] = CSRF;
     init.body = JSON.stringify(Object.assign({ csrf: CSRF }, opts.body));
   }
-  const res = await fetch(API + action, init);
-  let data = {};
-  try { data = await res.json(); } catch(e){}
-  if (!res.ok && !data.error) data.error = "Ошибка сервера (" + res.status + ")";
-  return data;
+  try {
+    const res = await fetch(API + action, init);
+    let data = {};
+    try { data = await res.json(); } catch(e){}
+    if (!res.ok && !data.error) data.error = "Ошибка сервера (" + res.status + ")";
+    return data;
+  } catch (e) {
+    return { ok: false, error: "Не удалось связаться с сервером. Проверьте подключение и попробуйте ещё раз." };
+  }
+}
+
+function safeExternalUrl(value){
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) return "";
+    if (["localhost", "127.0.0.1", "::1"].includes(url.hostname.toLowerCase())) return "";
+    return url.href;
+  } catch(e) { return ""; }
 }
 
 /* ---------- Даты / формат ---------- */
@@ -233,9 +298,10 @@ function actionsCell(w, isPast){
   // И для прошедших, и для будущих кнопка ведёт на link_participant —
   // на этой странице уже собраны все действия (смотреть онлайн, запись, материалы).
   const label = isPast ? "Смотреть запись" : "Смотреть вебинар";
-  if (w.link_participant) btns.push(`<a class="btn btn--watch" href="${esc(w.link_participant)}" target="_blank" rel="noopener" data-watch="${esc(w.id)}">${iconPlay()}${label}</a>`);
-  if (!isPast && feat("btn_access")) btns.push(`<button class="btn btn--soft" data-mail="access" data-id="${esc(w.id)}" title="Отправить доступ на email">${iconMail()}Отправить на email</button>`);
-  if (feat("btn_invite")) btns.push(`<button class="btn btn--soft" data-mail="invite" data-id="${esc(w.id)}" title="Пригласить на вебинар">${iconInvite()}Пригласить на вебинар</button>`);
+  const safeLink = safeExternalUrl(w.link_participant);
+  if (safeLink) btns.push(`<a class="btn btn--watch" href="${esc(safeLink)}" target="_blank" rel="noopener noreferrer" data-watch="${esc(w.id)}" title="${label}">${iconPlay()}<span class="btn-label">${label}</span></a>`);
+  if (safeLink && !isPast && feat("btn_access")) btns.push(`<button class="btn btn--soft" data-mail="access" data-id="${esc(w.id)}" title="Отправить доступ на email" aria-label="Отправить доступ на email">${iconMail()}<span class="btn-label btn-label--long">Отправить на email</span><span class="btn-label btn-label--short" aria-hidden="true">Email</span></button>`);
+  if (safeLink && feat("btn_invite")) btns.push(`<button class="btn btn--soft" data-mail="invite" data-id="${esc(w.id)}" title="Пригласить на вебинар" aria-label="Пригласить на вебинар">${iconInvite()}<span class="btn-label btn-label--long">Пригласить на вебинар</span><span class="btn-label btn-label--short" aria-hidden="true">Пригласить</span></button>`);
   return `<div class="actions">${btns.join("")||'<span class="no-link">—</span>'}</div>`;
 }
 function viewedBadge(id){
@@ -267,10 +333,38 @@ function applySort(list){
     if(av<bv)return -1*mul; if(av>bv)return 1*mul; return a._d.ts-b._d.ts;
   });
 }
-function matchesSearch(w){ if(!searchTerm)return true; const t=searchTerm.toLowerCase(); return (w.title||"").toLowerCase().includes(t)||(w.speaker||"").toLowerCase().includes(t); }
+function webinarSearchText(w){
+  const date=String(w.date||"");
+  const parts=date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const dateTerms=[date,w._d&&w._d.full||"",w._d&&w._d.day||"",w._d&&w._d.month||"",w._d&&w._d.year||""];
+  if(parts){
+    const [,year,month,day]=parts;
+    const monthIndex=Number(month)-1;
+    const shortDay=String(Number(day));
+    const shortMonth=String(Number(month));
+    const monthGen=MONTHS[monthIndex]||"";
+    const monthNom=MONTHS_NOMINATIVE[monthIndex]||"";
+    dateTerms.push(
+      `${day}.${month}.${year}`,`${shortDay}.${shortMonth}.${year}`,
+      `${day}/${month}/${year}`,`${day}-${month}-${year}`,
+      `${day} ${month} ${year}`,`${shortDay} ${shortMonth} ${year}`,
+      `${day} ${monthGen} ${year}`,`${day} ${monthNom} ${year}`,
+      `${month}.${year}`,`${month}/${year}`,`${year}-${month}`,`${year}.${month}`,
+      `${monthGen} ${year}`,`${monthNom} ${year}`
+    );
+  }
+  return [w.title||"",w.speaker||"",...dateTerms].join(" ").toLocaleLowerCase("ru-RU");
+}
+function matchesSearch(w){
+  const terms=String(searchTerm||"").toLocaleLowerCase("ru-RU").trim().split(/\s+/).filter(Boolean);
+  if(!terms.length)return true;
+  const haystack=webinarSearchText(w);
+  return terms.every(term=>haystack.includes(term));
+}
 function matchesCat(w){ if(!isCatAllowed(w._cat))return false; return activeCat==="all"||w._cat===activeCat; }
 
 function buildChips(){
+  const box=$("chips"); if(!box) return;
   const visible = ALL.filter(w=>isCatAllowed(w._cat));
   const counts={}; visible.forEach(w=>counts[w._cat]=(counts[w._cat]||0)+1);
   const allowed = ALL_CAT_KEYS.concat("other").filter(k=>counts[k]);
@@ -278,44 +372,107 @@ function buildChips(){
   if(userAllowsAll()||allowed.length>1){
     html+=`<button class="chip ${activeCat==='all'?'active':''}" data-cat="all">${iconLayers()}Все<span class="cnt">${visible.length}</span></button>`;
   }
-  allowed.forEach(k=>{const c=catInfo(k); html+=`<button class="chip ${activeCat===k?'active':''}" data-cat="${k}" style="--c:${c.c}">${c.icon()}${esc(c.label)}<span class="cnt">${counts[k]}</span></button>`;});
-  $("chips").innerHTML=html;
-  $("chips").querySelectorAll(".chip").forEach(b=>b.addEventListener("click",()=>{activeCat=b.dataset.cat;pageLimit=0;buildChips();buildPeriods();render();}));
-}
-
-// --- Пользовательские пресеты фильтров ---
-function buildPresets(){
-  const box=$("presets-bar"); if(!box) return;
-  const isAdmin = currentUser && currentUser.role==="admin";
-  let html = PRESETS_SAVED.map((p,i)=>`<button class="preset-chip" data-preset-i="${i}" title="${esc(periodLabel(p.period))} · ${esc(catLabel(p.cat))}${p.search?(' · «'+esc(p.search)+'»'):''}">${esc(p.name)}${isAdmin?`<span class="preset-del" data-del-i="${i}" title="Удалить">×</span>`:''}</button>`).join("");
-  if(isAdmin) html += `<button class="preset-chip preset-add" id="preset-add" title="Сохранить текущий фильтр как пресет">+ пресет</button>`;
-  box.innerHTML = html;
-  box.querySelectorAll("[data-preset-i]").forEach(b=>b.addEventListener("click",(e)=>{
-    if(e.target.classList.contains("preset-del")) return;
-    applyPreset(PRESETS_SAVED[+b.dataset.presetI]);
-  }));
-  box.querySelectorAll("[data-del-i]").forEach(b=>b.addEventListener("click",async(e)=>{
-    e.stopPropagation();
-    PRESETS_SAVED.splice(+b.dataset.delI,1);
-    await api("presets_save",{body:{presets:PRESETS_SAVED}}); buildPresets(); toast("Пресет удалён");
-  }));
-  const add=$("preset-add");
-  if(add) add.addEventListener("click", async()=>{
-    const name=prompt("Название пресета:", catLabel(activeCat)+" · "+periodLabel(activePeriod));
-    if(!name) return;
-    PRESETS_SAVED.push({name:name.trim(), period:activePeriod, cat:activeCat, search:searchTerm});
-    const r=await api("presets_save",{body:{presets:PRESETS_SAVED}});
-    if(r.ok){ buildPresets(); toast("Пресет сохранён"); }
+  allowed.forEach(k=>{
+    const c=catInfo(k);
+    const effectivelyActive=activeCat===k||(activeCat==="all"&&!userAllowsAll()&&allowed.length===1&&allowed[0]===k);
+    html+=`<button class="chip ${effectivelyActive?'active':''}" data-cat="${k}" style="--c:${c.c}">${c.icon()}${esc(c.label)}<span class="cnt">${counts[k]}</span></button>`;
   });
+  box.innerHTML=html;
+  const current=$("category-current");
+  if(current) current.textContent=activeCat==="all"?"Все":(catInfo(activeCat).label);
+  const toggle=$("category-toggle");
+  if(toggle) toggle.setAttribute("aria-label", "Направления: "+(activeCat==="all"?"все доступные направления":catInfo(activeCat).label));
+  box.querySelectorAll(".chip").forEach(b=>b.addEventListener("click",()=>{
+    activeCat=b.dataset.cat; pageLimit=0; setCategoryDropdownOpen(false); buildChips(); buildPeriods(); render();
+  }));
 }
+function setCategoryDropdownOpen(open, restoreFocus){
+  const filter=$("category-filter"), toggle=$("category-toggle");
+  if(!filter||!toggle)return;
+  filter.classList.toggle("is-open",!!open);
+  toggle.setAttribute("aria-expanded",open?"true":"false");
+  if(restoreFocus)toggle.focus();
+}
+on("category-toggle","click",()=>{
+  const toggle=$("category-toggle");
+  setCategoryDropdownOpen(toggle&&toggle.getAttribute("aria-expanded")!=="true");
+});
+document.addEventListener("click",e=>{
+  const filter=$("category-filter");
+  if(filter&&!filter.contains(e.target))setCategoryDropdownOpen(false);
+});
+document.addEventListener("keydown",e=>{
+  const toggle=$("category-toggle");
+  if(e.key==="Escape"&&toggle&&toggle.getAttribute("aria-expanded")==="true")setCategoryDropdownOpen(false,true);
+});
+
+// --- Сохранённые пресеты фильтров ---
+function buildPresetSelect(){
+  const box=$("quick-presets"), select=$("preset-select");
+  if(!box||!select)return;
+  select.innerHTML='<option value="">Сохранённые фильтры</option>'+PRESETS_SAVED.map((p,i)=>`<option value="${i}">${esc(p.name)}</option>`).join("");
+  select.value="";
+  box.classList.toggle("hidden",PRESETS_SAVED.length===0);
+}
+function buildPresetSettings(){
+  const box=$("preset-list"); if(!box)return;
+  const canEdit=currentUser&&currentUser.role==="admin";
+  const createRow=$("preset-name")?.closest(".preset-create-row");
+  if(createRow)createRow.classList.toggle("hidden",!canEdit);
+  if(!canEdit){box.innerHTML="";return;}
+  if(!PRESETS_SAVED.length){
+    box.innerHTML='<p class="preset-settings-empty">Сохранённых фильтров пока нет.</p>';
+    return;
+  }
+  box.innerHTML=PRESETS_SAVED.map((p,i)=>`
+    <div class="preset-setting">
+      <div class="preset-setting__info"><b>${esc(p.name)}</b><small>${esc(periodLabel(p.period))} · ${esc(catLabel(p.cat))}${p.search?` · Поиск: «${esc(p.search)}»`:""}</small></div>
+      <button class="mbtn preset-setting__delete" type="button" data-preset-delete="${i}" aria-label="Удалить пресет «${esc(p.name)}»">Удалить</button>
+    </div>`).join("");
+  box.querySelectorAll("[data-preset-delete]").forEach(button=>button.addEventListener("click",async()=>{
+    const index=Number(button.dataset.presetDelete);
+    if(!Number.isInteger(index)||!PRESETS_SAVED[index])return;
+    button.disabled=true;
+    const next=PRESETS_SAVED.filter((_,i)=>i!==index);
+    if(!await savePresetList(next,"Пресет удалён"))button.disabled=false;
+  }));
+}
+async function savePresetList(presets,successMessage){
+  const result=await api("presets_save",{body:{presets}});
+  if(!result||!result.ok){toast(result&&result.error||"Не удалось сохранить пресеты",true);return false;}
+  PRESETS_SAVED=Array.isArray(result.presets)?result.presets:presets;
+  buildPresetSelect();
+  buildPresetSettings();
+  if(successMessage)toast(successMessage);
+  return true;
+}
+async function saveCurrentPreset(){
+  if(!currentUser||currentUser.role!=="admin")return;
+  const input=$("preset-name"), name=(input&&input.value||"").trim();
+  if(!name){toast("Введите название пресета",true);if(input)input.focus();return;}
+  if(PRESETS_SAVED.length>=30){toast("Можно сохранить не более 30 пресетов",true);return;}
+  const next=PRESETS_SAVED.concat({name:name.slice(0,40),period:activePeriod,cat:activeCat,search:searchTerm.slice(0,80)});
+  if(await savePresetList(next,"Пресет сохранён")&&input)input.value="";
+}
+on("preset-save","click",saveCurrentPreset);
+on("preset-name","keydown",e=>{if(e.key==="Enter"){e.preventDefault();saveCurrentPreset();}});
+on("preset-select","change",e=>{
+  const value=e.target.value;
+  const index=Number(value);
+  if(value!==""&&Number.isInteger(index)&&PRESETS_SAVED[index])applyPreset(PRESETS_SAVED[index]);
+  e.target.value="";
+});
 function periodLabel(p){ return p==="all"?"Все":p==="upcoming"?"Предстоящие":p==="past"?"Прошедшие":(p&&p.indexOf("year:")===0?"Вебинары "+p.split(":")[1]:p); }
 function catLabel(k){ return k==="all"?"Все направления":(catInfo(k).label); }
 function applyPreset(p){
   if(!p) return;
-  activePeriod=p.period||"all"; activeCat=p.cat||"all"; searchTerm=p.search||"";
+  const nextPeriod=String(p.period||"all");
+  activePeriod=["all","upcoming","past"].includes(nextPeriod)||/^year:\d{4}$/.test(nextPeriod)?nextPeriod:"all";
+  activeCat=["all","other",...ALL_CAT_KEYS].includes(p.cat)?p.cat:"all";
+  searchTerm=String(p.search||"").slice(0,80);
   const si=$("search"); if(si) si.value=searchTerm;
   pageLimit=0; buildChips(); buildPeriods(); render();
-  toast("Фильтр: "+esc(p.name));
+  toast("Фильтр: "+String(p.name||""));
 }
 
 // К какому периоду относится вебинар
@@ -373,7 +530,7 @@ function fmtDate(w, tpl){
     "YYYY": String(yr),
     "YY": String(yr).slice(-2)
   };
-  return tpl.replace(/MMMM|MM|M|DD|D|YYYY|YY/g, t=>map[t]);
+  return esc(tpl.replace(/MMMM|MM|M|DD|D|YYYY|YY/g, t=>map[t]));
 }
 
 // ===== Реестр колонок (data-driven). Добавить колонку = добавить сюда запись. =====
@@ -441,7 +598,7 @@ function rowHtml(w, isPast){
 // ===== Карточный режим =====
 function cardHtml(w, isPast){
   const c=catInfo(w._cat);
-  const timer = (!isPast && feat("timer")) ? `<div class="wc__timer"><span data-ts="${w._d.ts}" data-time="${esc(w.time||'')}">${countdownHtml(w._d.ts, w.time)}</span></div>` : '';
+  const timer = (!isPast && feat("timer")) ? `<div class="wcard__timer"><span data-ts="${w._d.ts}" data-time="${esc(w.time||'')}">${countdownHtml(w._d.ts, w.time)}</span></div>` : '';
   return `<article class="wcard" data-cat="${w._cat}" style="--rc:${c.c};--rc-bg:${c.bg}">
     <div class="wcard__top">
       <span class="wcard__cat" style="--c:${c.c};--cbg:${c.bg}">${c.icon()}${esc(c.label)}</span>
@@ -489,11 +646,19 @@ function render(){
   const expired = isExpired(currentUser);
   if(expired){
     box.innerHTML = `<div class="panel"><div class="state">Доступ к вебинарам закрыт: подписка истекла.</div></div>`;
+    setText("results-count",""); setHidden("clear-filters",true);
     bindMailButtons(); bindSortHeaders(); bindResizers(); updateSortHeaders(); return;
   }
   // фильтр по периоду
   let source = ALL.filter(w=>matchesSearch(w)&&matchesCat(w));
   if(activePeriod!=="all") source = source.filter(w=>webinarPeriod(w)===activePeriod);
+  const baseCount=ALL.filter(w=>matchesCat(w)&&(activePeriod==="all"||webinarPeriod(w)===activePeriod)).length;
+  const countLabel=plural(source.length,"вебинар","вебинара","вебинаров");
+  const countText=searchTerm
+    ? `Найдено ${source.length} из ${baseCount} ${plural(baseCount,"вебинара","вебинаров","вебинаров")}`
+    : `${activeCat==="all"&&activePeriod==="all"?"Всего":"Показано"} ${source.length} ${countLabel}`;
+  setText("results-count",countText);
+  setHidden("clear-filters",!(searchTerm||activeCat!=="all"||activePeriod!=="all"));
 
   const rows = applySort(source);
   const meta = { all:{h:"Все вебинары",dot:"dot-up"}, upcoming:{h:"Предстоящие вебинары",dot:"dot-up"}, past:{h:"Прошедшие вебинары",dot:"dot-past"} };
@@ -569,8 +734,8 @@ function bindMailButtons(){
   // Логируем просмотр при клике «Смотреть»/«Запись» (ссылка открывается в новой вкладке)
   document.querySelectorAll("[data-watch]").forEach(a=>a.addEventListener("click",()=>{
     const id=a.dataset.watch;
-    api("log_view",{body:{webinar_id:id}}).then(()=>{
-      if(!MY_VIEWS.has(String(id))){ MY_VIEWS.add(String(id)); render(); }
+    api("log_view",{body:{webinar_id:id}}).then(result=>{
+      if(result && result.logged===true && !MY_VIEWS.has(String(id))){ MY_VIEWS.add(String(id)); render(); }
     });
   }));
 }
@@ -580,6 +745,7 @@ function updateSortHeaders(){
   const sd=$("sort-dir"); if(sd){
     sd.classList.toggle("desc", sort.dir==="desc");
     sd.title = sort.dir==="smart"?"Сначала ближайшие":(sort.dir==="asc"?"По возрастанию":"По убыванию");
+    sd.setAttribute("aria-label", "Порядок сортировки: " + sd.title);
   }
   document.querySelectorAll("th.sortable").forEach(th=>{
     const ar=th.querySelector(".arrow");
@@ -606,6 +772,12 @@ on("sort-dir","click",()=>{
   render();
 });
 on("search","input",e=>{searchTerm=e.target.value.trim();pageLimit=0;render();});
+on("clear-filters","click",()=>{
+  searchTerm=""; activeCat="all"; activePeriod="all"; pageLimit=0;
+  const input=$("search"); if(input)input.value="";
+  setCategoryDropdownOpen(false); buildChips(); buildPeriods(); render();
+  if(input)input.focus();
+});
 
 /* ---------- Тост ---------- */
 let toastTimer=null;
@@ -623,14 +795,14 @@ on("login-form","submit", async(e)=>{
   CSRF=r.csrf||CSRF; currentUser=r.user;
   // подтянуть актуальные тумблеры функций
   const me=await api("me");
-  if(me&&me.features)FEATURES=me.features;
   ingestAppearance(me);
   if(me&&typeof me.show_past!=="undefined")appSettings.show_past=me.show_past!==false;
   applyAllAppearance();
   enterApp();
 });
 on("logout","click", async()=>{
-  await api("logout",{body:{}});
+  const result = await api("logout",{body:{}});
+  if(result && result.csrf) CSRF = result.csrf;
   currentUser=null;
   $("app").classList.add("hidden");
   $("login-screen").classList.remove("hidden");
@@ -662,13 +834,14 @@ async function enterApp(){
 
 async function loadWebinars(fresh){
   const st=$("state-main");
-  if(st){ st.hidden=false; st.classList.remove("state--error"); st.innerHTML='<span class="spinner"></span>Загружаем расписание…'; }
-  const r=await api("webinars"+(fresh?"&fresh=1":""));
-  if(!r.ok){ if(st){ st.hidden=false; st.classList.add("state--error"); st.innerHTML=esc(r.error||"Не удалось загрузить вебинары."); } return; }
+  if(st){ st.hidden=false; st.classList.remove("hidden","state--error"); st.innerHTML='<span class="spinner"></span>Загружаем расписание…'; }
+  const r=fresh ? await api("webinars_refresh",{body:{}}) : await api("webinars");
+  if(!r.ok){ if(st){ st.hidden=false; st.classList.remove("hidden"); st.classList.add("state--error"); st.textContent=r.error||"Не удалось загрузить вебинары."; } return; }
+  if(st){st.hidden=true;st.classList.add("hidden");}
   CABINET=r.cabinet||"";
   MY_VIEWS=new Set((r.my_views||[]).map(String));
   ALL=(r.webinars||[]).map(w=>({...w,_d:parseDate(w.date),_cat:detectCat(w)}));
-  buildChips(); buildPeriods(); buildPresets(); render();
+  buildChips(); buildPeriods(); buildPresetSelect(); render();
 }
 // Кнопка «Обновить» — сбрасывает кэш источника и перечитывает
 on("refresh","click", async()=>{
@@ -796,7 +969,19 @@ async function delUser(login){
 /* Форма пользователя */
 const uOverlay=$("user-overlay"); let editingLogin=null;
 function genLoginLocal(){const l="abcdefghijklmnopqrstuvwxyz";let s="";for(let i=0;i<4;i++)s+=l[Math.floor(Math.random()*26)];return s;}
-function genPassLocal(){const d="23456789",u="ABCDEFGHJKLMNPQRSTUVWXYZ",lo="abcdefghijkmnpqrstuvwxyz",sy="!#$%*+-?",all=d+u+lo;let c=[d[Math.floor(Math.random()*d.length)],u[Math.floor(Math.random()*u.length)],lo[Math.floor(Math.random()*lo.length)],sy[Math.floor(Math.random()*sy.length)]];while(c.length<6)c.push(all[Math.floor(Math.random()*all.length)]);for(let i=c.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[c[i],c[j]]=[c[j],c[i]];}return c.join("");}
+function secureRandomInt(max){
+  if(!globalThis.crypto||!crypto.getRandomValues)throw new Error("Для генерации пароля требуется защищённое соединение HTTPS.");
+  const range=0x100000000,limit=Math.floor(range/max)*max,word=new Uint32Array(1);
+  do{crypto.getRandomValues(word);}while(word[0]>=limit);
+  return word[0]%max;
+}
+function genPassLocal(){
+  const digits="23456789",upper="ABCDEFGHJKLMNPQRSTUVWXYZ",lower="abcdefghijkmnpqrstuvwxyz",symbols="!#$%*+-?",all=digits+upper+lower+symbols;
+  const chars=[digits[secureRandomInt(digits.length)],upper[secureRandomInt(upper.length)],lower[secureRandomInt(lower.length)],symbols[secureRandomInt(symbols.length)]];
+  while(chars.length<16)chars.push(all[secureRandomInt(all.length)]);
+  for(let i=chars.length-1;i>0;i--){const j=secureRandomInt(i+1);[chars[i],chars[j]]=[chars[j],chars[i]];}
+  return chars.join("");
+}
 function buildCatChecks(sel){
   sel=sel||[]; const all=sel.includes("all");
   let h=`<label><input type="checkbox" id="cc-all" ${all?"checked":""}> Все</label>`;
@@ -810,7 +995,9 @@ function openUserForm(login){
   const u=login?USERS_CACHE.find(x=>x.login===login):null;
   $("user-modal-title").textContent=u?"Редактирование пользователя":"Новый пользователь";
   $("ef-login").value=u?u.login:genLoginLocal();
-  $("ef-pass").value=u?"":genPassLocal();
+  let initialPassword=""; if(!u){try{initialPassword=genPassLocal();}catch(e){toast(e.message||"Используйте HTTPS для генерации пароля.",true);}}
+  $("ef-pass").value=initialPassword;
+  $("ef-pass").type="password"; $("ef-showpass").textContent="Показать"; $("ef-showpass").setAttribute("aria-pressed","false");
   $("ef-pass").placeholder=u?"оставьте пустым, чтобы не менять":"";
   $("ef-org").value=u?(u.org||""):""; $("ef-email").value=u?(u.email||""):"";
   $("ef-role").value=u?(u.role||"user"):"user"; $("ef-expires").value=u?(u.expires||""):"";
@@ -821,7 +1008,11 @@ function closeUserForm(){uOverlay.classList.remove("open");uOverlay.setAttribute
 on("new-user-btn","click",()=>openUserForm(null));
 on("user-modal-close","click",closeUserForm);
 on("ef-cancel","click",closeUserForm);
-on("ef-genpass","click",()=>$("ef-pass").value=genPassLocal());
+on("ef-genpass","click",()=>{try{$("ef-pass").value=genPassLocal();}catch(e){$("ef-err").textContent=e.message||"Не удалось сгенерировать пароль.";}});
+on("ef-showpass","click",e=>{
+  const input=$("ef-pass"),show=input.type==="password";
+  input.type=show?"text":"password"; e.currentTarget.textContent=show?"Скрыть":"Показать"; e.currentTarget.setAttribute("aria-pressed",show?"true":"false");
+});
 uOverlay.addEventListener("click",e=>{if(e.target===uOverlay)closeUserForm();});
 on("ef-save","click", async()=>{
   $("ef-err").textContent="";
@@ -975,6 +1166,7 @@ function loadViewForm(){
   buildColConfig();
   buildFieldMapForm();
   buildCatConfig();
+  buildPresetSettings();
 }
 // --- Конфиг колонок: список с чекбоксом, полем подписи и drag-ن-drop ---
 function buildColConfig(){
@@ -1115,7 +1307,7 @@ on("save-features","click", async()=>{
   document.querySelectorAll("#feat-list [data-feat]").forEach(cb=>{features[cb.dataset.feat]=cb.checked;});
   const r=await api("features_save",{body:{features,show_past:$("feat-showpast").checked}});
   if(!r.ok){toast(r.error||"Ошибка",true);return;}
-  FEATURES=r.features||features; appSettings.show_past=$("feat-showpast").checked;
+  ingestFeatures(r.features||features); appSettings.show_past=$("feat-showpast").checked;
   toast("Функции сохранены");
   render();                 // мгновенно применяем
   // обновим шапку (кнопка «Мои просмотры», таймер) без полного перезахода
@@ -1179,8 +1371,7 @@ on("btn-import","click",()=>{
     // перечитываем актуальные функции/настройки/вебинары
     setTimeout(async()=>{
       const me=await api("me");
-      if(me&&me.features)FEATURES=me.features;
-      if(me&&typeof me.show_past!=="undefined")appSettings.show_past=me.show_past!==false;
+          if(me&&typeof me.show_past!=="undefined")appSettings.show_past=me.show_past!==false;
       await loadWebinars();
       await loadSettingsIntoForm();
     },600);
@@ -1205,7 +1396,8 @@ on("btn-smtp-test","click", async()=>{
   try{
     const r=await api("me");
     if(r&&r.csrf)CSRF=r.csrf;
-    if(r&&r.features)FEATURES=r.features;
+    setHidden("setup-note", !(r && r.setup_required));
+    setHidden("login-form", !!(r && r.setup_required));
     ingestAppearance(r);
     if(r&&typeof r.show_past!=="undefined")appSettings.show_past=r.show_past!==false;
     applyAllAppearance();

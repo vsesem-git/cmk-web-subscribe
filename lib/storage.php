@@ -1,17 +1,19 @@
 <?php
 /**
- * Хранилище на JSON-файлах с блокировками.
- * Пароли пользователей хранятся в виде хешей (password_hash).
+ * JSON-file storage, runtime settings, webinar normalization and access policy.
  */
 declare(strict_types=1);
 
-/** Атомарное чтение JSON. */
+/** Read a JSON document under a shared lock. */
 function store_read(string $file, array $default = []): array
 {
     if (!is_file($file)) return $default;
-    $fp = fopen($file, 'rb');
+    $fp = @fopen($file, 'rb');
     if (!$fp) return $default;
-    flock($fp, LOCK_SH);
+    if (!flock($fp, LOCK_SH)) {
+        fclose($fp);
+        return $default;
+    }
     $raw = stream_get_contents($fp);
     flock($fp, LOCK_UN);
     fclose($fp);
@@ -19,45 +21,56 @@ function store_read(string $file, array $default = []): array
     return is_array($data) ? $data : $default;
 }
 
-/** Атомарная запись JSON (через временный файл + rename). */
+/** Write JSON atomically with private permissions. */
 function store_write(string $file, array $data): bool
 {
     $dir = dirname($file);
-    if (!is_dir($dir)) mkdir($dir, 0750, true);
-    $tmp = $file . '.' . bin2hex(random_bytes(4)) . '.tmp';
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) return false;
+    $tmp = $file . '.' . bin2hex(random_bytes(8)) . '.tmp';
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     if ($json === false) return false;
-    if (file_put_contents($tmp, $json, LOCK_EX) === false) return false;
-    @chmod($tmp, 0640);
-    return rename($tmp, $file);
+    if (@file_put_contents($tmp, $json, LOCK_EX) === false) return false;
+    @chmod($tmp, 0600);
+    if (!@rename($tmp, $file)) {
+        @unlink($tmp);
+        return false;
+    }
+    @chmod($file, 0600);
+    return true;
 }
 
-/* ---------- Пользователи ---------- */
+/* ---------- Users ---------- */
 function users_all(): array
 {
-    $d = store_read(USERS_FILE, ['users' => []]);
-    return $d['users'] ?? [];
+    $data = store_read(USERS_FILE, ['users' => []]);
+    return isset($data['users']) && is_array($data['users']) ? $data['users'] : [];
 }
+
 function users_save(array $users): bool
 {
     return store_write(USERS_FILE, ['users' => array_values($users)]);
 }
+
 function users_find(string $login): ?array
 {
-    foreach (users_all() as $u) {
-        if (($u['login'] ?? '') === $login) return $u;
+    $needle = function_exists('mb_lower') ? mb_lower(trim($login)) : strtolower(trim($login));
+    foreach (users_all() as $user) {
+        if (!is_array($user)) continue;
+        $candidate = (string)($user['login'] ?? '');
+        $candidate = function_exists('mb_lower') ? mb_lower($candidate) : strtolower($candidate);
+        if ($candidate === $needle) return $user;
     }
     return null;
 }
 
-/** Убрать из массива пользователя приватные поля перед отдачей клиенту. */
-function user_public(array $u): array
+/** Return only the account fields required by the UI; never leak hashes or imported extras. */
+function user_public(array $user): array
 {
-    unset($u['password_hash']);
-    return $u;
+    $allowed = array_flip(['login', 'role', 'org', 'email', 'categories', 'expires', 'active', 'last_login', 'last_ip', 'login_count']);
+    return array_intersect_key($user, $allowed);
 }
 
-/* ---------- Настройки (SMTP и пр.) ---------- */
+/* ---------- Settings ---------- */
 function settings_defaults(): array
 {
     return [
@@ -66,182 +79,344 @@ function settings_defaults(): array
             'user' => '', 'pass' => '', 'from_email' => '', 'from_name' => MAIL_FROM_NAME,
         ],
         'source_url' => '',
-        'show_past'  => true,
-        // Тумблеры функций (админ включает/выключает)
+        'show_past' => true,
         'features' => [
-            'log_login'   => true,   // логировать входы
-            'log_views'   => true,   // логировать просмотры вебинаров
-            'log_mail'    => true,   // логировать отправку писем
-            'btn_access'  => true,   // кнопка «Отправить доступ на email»
-            'btn_invite'  => true,   // кнопка «Отправить приглашение»
-            'my_views'    => true,   // раздел «Мои просмотры» для пользователей
-            'timer'       => true,   // таймер обратного отсчёта
-            'viewed_badge'=> true,   // значок «просмотрен»
-            'expiry_warn' => true,   // предупреждение о скором окончании подписки
+            'log_login' => true,
+            'log_views' => true,
+            'log_mail' => true,
+            'btn_access' => true,
+            'btn_invite' => true,
+            'my_views' => true,
+            'timer' => true,
+            'viewed_badge' => true,
+            'expiry_warn' => true,
         ],
-        // Авто-очистка логов
-        'log_retention' => [
-            'enabled'   => true,
-            'days'      => 180,      // хранить N дней
-            'max_lines' => 20000,    // и не более N строк на файл
-        ],
-        // Размер шрифта по столбцам (px) — задаёт админ, применяется для всех
-        'col_fonts' => [
-            'date'    => 15,
-            'speaker' => 15,
-            'timer'   => 14,
-            'title'   => 16,
-            'price'   => 15,
-        ],
-        // Ширина столбцов (px), 0 = авто
-        'col_widths' => [
-            'date'    => 118,
-            'speaker' => 140,
-            'timer'   => 110,
-            'title'   => 0,     // 0 = растягивать
-            'price'   => 130,
-            'action'  => 240,
-        ],
-        // Вид таблицы
+        'log_retention' => ['enabled' => true, 'days' => 180, 'max_lines' => 20000],
+        'col_fonts' => ['date' => 15, 'speaker' => 15, 'timer' => 14, 'title' => 16, 'price' => 15],
+        'col_widths' => ['date' => 118, 'speaker' => 140, 'timer' => 110, 'title' => 0, 'price' => 130, 'action' => 240],
         'view' => [
-            'density'    => 'normal',   // compact | normal | comfortable
-            'theme'      => 'light',    // light | dark
-            'start_hour' => 10,         // час начала вебинаров по умолчанию (для таймера)
-            'mode'       => 'table',    // table | cards — режим отображения
-            'page_size'  => 0,          // 0 = без пагинации; иначе N на страницу («показать ещё»)
-            'date_format'=> 'D MMMM YYYY', // шаблон даты (D, DD, M, MM, MMMM, YYYY, YY)
+            'density' => 'normal', 'theme' => 'light', 'start_hour' => 10,
+            'mode' => 'table', 'page_size' => 0, 'date_format' => 'D MMMM YYYY',
         ],
-        // Конфиг колонок как данные: порядок + видимость + подпись.
-        // key — служебный ключ (совпадает с ключами col_fonts/col_widths и рендерерами).
         'columns' => [
-            ['key' => 'date',    'label' => 'Дата',              'visible' => true],
-            ['key' => 'speaker', 'label' => 'Лектор',            'visible' => true],
-            ['key' => 'timer',   'label' => 'До начала',         'visible' => true],
-            ['key' => 'title',   'label' => 'Тема',              'visible' => true],
-            ['key' => 'price',   'label' => 'Цена без подписки', 'visible' => true],
-            ['key' => 'action',  'label' => 'Действия',          'visible' => true],
+            ['key' => 'date', 'label' => 'Дата', 'visible' => true],
+            ['key' => 'speaker', 'label' => 'Лектор', 'visible' => true],
+            ['key' => 'timer', 'label' => 'До начала', 'visible' => true],
+            ['key' => 'title', 'label' => 'Тема', 'visible' => true],
+            ['key' => 'price', 'label' => 'Цена без подписки', 'visible' => true],
+            ['key' => 'action', 'label' => 'Действия', 'visible' => true],
         ],
-        // Сопоставление полей JSON -> логические поля (гибкий формат внешних данных)
         'field_map' => [
-            'date'             => 'date',
-            'speaker'          => 'speaker',
-            'title'            => 'title',
-            'price'            => 'price',
-            'direction'        => 'direction',
-            'link_participant' => 'link_participant',
-            'time'             => 'time',
-            'id'               => 'id',
+            'date' => 'date', 'speaker' => 'speaker', 'title' => 'title', 'price' => 'price',
+            'direction' => 'direction', 'link_participant' => 'link_participant',
+            'time' => 'time', 'id' => 'id',
         ],
-        // Переопределение цветов/иконок категорий (пусто = брать из кода)
-        // формат: { "zhkh": {"color":"#1E6FA8","label":"ЖКХ"} , ... }
         'cat_overrides' => new stdClass(),
+        'presets' => [],
     ];
 }
+
 function settings_get(): array
 {
-    $s = store_read(SETTINGS_FILE, []);
-    // мягко сливаем с дефолтами (чтобы новые ключи появлялись у старых конфигов)
-    return array_replace_recursive(settings_defaults(), is_array($s) ? $s : []);
-}
-function settings_save(array $s): bool
-{
-    return store_write(SETTINGS_FILE, $s);
+    $settings = store_read(SETTINGS_FILE, []);
+    return array_replace_recursive(settings_defaults(), $settings);
 }
 
-/** Быстрая проверка, включена ли функция. */
+function settings_save(array $settings): bool
+{
+    return store_write(SETTINGS_FILE, $settings);
+}
+
 function feature_on(string $key): bool
 {
-    $s = settings_get();
-    return !empty($s['features'][$key]);
+    $settings = settings_get();
+    return !empty($settings['features'][$key]);
 }
 
-/* ---------- Вебинары ---------- */
-/**
- * Список вебинаров. Если в настройках задан source_url — берём оттуда
- * (с коротким серверным кэшем), иначе — из локального data/webinars.json.
- */
+/* ---------- Remote source validation / fetching ---------- */
+function is_public_ip(string $ip): bool
+{
+    return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+}
+
+/** Reject browser/URL-parser legacy IPv4 spellings such as 127.1 or 0x7f000001. */
+function host_has_numeric_final_label(string $host): bool
+{
+    $host = trim($host, '[]');
+    return preg_match('/(?:^|\\.)(?:0x[0-9a-f]*|[0-9]+)$/i', $host) === 1;
+}
+
+/** Reject private/local hosts commonly used for SSRF and unsafe protocols. */
+function remote_source_url_valid(string $url): bool
+{
+    if (strlen($url) > 2048 || preg_match('/[\\x00-\\x20\\\\]/', $url)) return false;
+    $parts = @parse_url(trim($url));
+    if (!is_array($parts) || strtolower((string)($parts['scheme'] ?? '')) !== 'https') return false;
+    if (empty($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) return false;
+    if (isset($parts['port']) && ((int)$parts['port'] < 1 || (int)$parts['port'] > 65535)) return false;
+    $host = strtolower(rtrim((string)$parts['host'], '.'));
+    if ($host === '' || $host === 'localhost' || preg_match('/(?:\.localhost|\.local|\.internal|\.test)$/i', $host)) return false;
+    $ipHost = trim($host, '[]');
+    if (filter_var($ipHost, FILTER_VALIDATE_IP)) return is_public_ip($ipHost);
+    if (host_has_numeric_final_label($ipHost) || strpos($ipHost, '.') === false
+        || filter_var($ipHost, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) return false;
+
+    $ips = [];
+    if (function_exists('dns_get_record')) {
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                if (!empty($record['ip'])) $ips[] = $record['ip'];
+                if (!empty($record['ipv6'])) $ips[] = $record['ipv6'];
+            }
+        }
+    }
+    if (!$ips && function_exists('gethostbynamel')) {
+        $resolved = @gethostbynamel($host);
+        if (is_array($resolved)) $ips = $resolved;
+    }
+    if (!$ips) {
+        $resolved = @gethostbyname($host);
+        if ($resolved && $resolved !== $host) $ips[] = $resolved;
+    }
+    if (!$ips) return false;
+    foreach (array_unique($ips) as $ip) {
+        if (!is_public_ip((string)$ip)) return false;
+    }
+    return true;
+}
+
+/** Allow only real HTTPS links with no credentials or local-network target. */
+function safe_web_url($value): string
+{
+    if (!is_string($value) || strlen($value) > 2048 || preg_match('/[\x00-\x20\\]/', $value)) return '';
+    $url = trim($value);
+    if (!filter_var($url, FILTER_VALIDATE_URL)) return '';
+    $parts = @parse_url($url);
+    if (!is_array($parts) || strtolower((string)($parts['scheme'] ?? '')) !== 'https'
+        || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) return '';
+    $host = strtolower(rtrim((string)$parts['host'], '.'));
+    if ($host === 'localhost' || preg_match('/(?:\.localhost|\.local|\.internal|\.test|\.lan)$/i', $host)) return '';
+    $ipHost = trim($host, '[]');
+    if (filter_var($ipHost, FILTER_VALIDATE_IP)) {
+        if (!is_public_ip($ipHost)) return '';
+    } elseif (host_has_numeric_final_label($ipHost) || strpos($ipHost, '.') === false
+        || filter_var($ipHost, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) {
+        return '';
+    }
+    return $url;
+}
+
 function webinars_all(): array
 {
-    $s = settings_get();
-    $url = trim((string)($s['source_url'] ?? ''));
+    $settings = settings_get();
+    $url = trim((string)($settings['source_url'] ?? ''));
     if ($url !== '') {
         $data = webinars_from_source($url);
         if ($data !== null) return $data;
-        // при недоступности источника — падаем на локальный файл
     }
-    $d = store_read(WEBINARS_FILE, []);
-    if (isset($d['webinars'])) return $d['webinars'];
-    return $d;
+    $local = store_read(WEBINARS_FILE, []);
+    $list = isset($local['webinars']) ? $local['webinars'] : $local;
+    return is_array($list) ? $list : [];
 }
 
-/**
- * Загрузка вебинаров из внешнего URL с кэшем.
- * Кэш живёт WEBINARS_CACHE_TTL секунд (по умолчанию 60) — чтобы обновление
- * подтягивалось при перезагрузке страницы, но не било по источнику на каждый запрос.
- * Вернёт массив или null (если не удалось).
- */
 function webinars_from_source(string $url): ?array
 {
-    $cacheFile = DATA_DIR . '/.webinars_cache.json';
-    $ttl = defined('WEBINARS_CACHE_TTL') ? (int)WEBINARS_CACHE_TTL : 60;
-    if ($ttl > 0 && is_file($cacheFile) && (time() - filemtime($cacheFile) < $ttl)) {
-        $cached = json_decode((string)@file_get_contents($cacheFile), true);
+    if (!remote_source_url_valid($url)) return null;
+    $cacheFile = DATA_DIR . '/.webinars_cache_' . hash('sha256', $url) . '.json';
+    $ttl = defined('WEBINARS_CACHE_TTL') ? max(0, (int)WEBINARS_CACHE_TTL) : 30;
+    if ($ttl > 0 && is_file($cacheFile) && (time() - (int)@filemtime($cacheFile) < $ttl)) {
+        $cached = store_read($cacheFile, []);
         if (is_array($cached)) return $cached;
     }
+
     $raw = fetch_remote($url);
     if ($raw === null) {
-        // источник недоступен — используем устаревший кэш, если есть
-        if (is_file($cacheFile)) {
-            $cached = json_decode((string)@file_get_contents($cacheFile), true);
-            if (is_array($cached)) return $cached;
-        }
+        if (is_file($cacheFile)) return store_read($cacheFile, []);
         return null;
     }
-    $d = json_decode($raw, true);
-    if (!is_array($d)) return null;
-    $list = isset($d['webinars']) ? $d['webinars'] : $d;
-    if (!is_array($list)) return null;
-    @file_put_contents($cacheFile, json_encode($list, JSON_UNESCAPED_UNICODE), LOCK_EX);
-    return $list;
+    $data = json_decode($raw, true);
+    if (!is_array($data)) return null;
+    $list = isset($data['webinars']) ? $data['webinars'] : $data;
+    if (!is_array($list) || count($list) > 1000) return null;
+    if (!store_write($cacheFile, array_values($list))) return $list;
+    return array_values($list);
 }
 
-/** Скачать содержимое URL (cURL или file_get_contents). null при ошибке. */
 function fetch_remote(string $url): ?string
 {
-    if (!preg_match('~^https?://~i', $url)) return null;
+    if (!remote_source_url_valid($url)) return null;
+    $maxBytes = 4 * 1024 * 1024;
+
     if (function_exists('curl_init')) {
+        $body = '';
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
+        $options = [
+            CURLOPT_RETURNTRANSFER => false,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0,
             CURLOPT_TIMEOUT => 8,
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_USERAGENT => BRAND_SHORT . '-webinars/1.0',
             CURLOPT_HTTPHEADER => ['Accept: application/json'],
-        ]);
-        $body = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            CURLOPT_WRITEFUNCTION => function ($handle, string $chunk) use (&$body, $maxBytes) {
+                if (strlen($body) + strlen($chunk) > $maxBytes) return 0;
+                $body .= $chunk;
+                return strlen($chunk);
+            },
+        ];
+        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS')) $options[CURLOPT_PROTOCOLS] = CURLPROTO_HTTPS;
+        if (defined('CURLOPT_REDIR_PROTOCOLS') && defined('CURLPROTO_HTTPS')) $options[CURLOPT_REDIR_PROTOCOLS] = CURLPROTO_HTTPS;
+        curl_setopt_array($ch, $options);
+        $ok = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        if ($body !== false && $code >= 200 && $code < 400) return (string)$body;
-        return null;
+        return $ok !== false && $code >= 200 && $code < 300 ? $body : null;
     }
-    $ctx = stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]);
-    $body = @file_get_contents($url, false, $ctx);
-    return $body === false ? null : (string)$body;
+
+    $context = stream_context_create([
+        'http' => ['timeout' => 8, 'follow_location' => 0, 'max_redirects' => 0, 'header' => "Accept: application/json\r\n"],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'allow_self_signed' => false],
+    ]);
+    $handle = @fopen($url, 'rb', false, $context);
+    if (!$handle) return null;
+    $body = stream_get_contents($handle, $maxBytes + 1);
+    fclose($handle);
+    if (!is_string($body) || strlen($body) > $maxBytes) return null;
+    return $body;
 }
 
-/** Принудительно сбросить кэш внешнего источника. */
 function webinars_cache_clear(): void
 {
-    $cacheFile = DATA_DIR . '/.webinars_cache.json';
-    if (is_file($cacheFile)) @unlink($cacheFile);
+    foreach (glob(DATA_DIR . '/.webinars_cache*.json') ?: [] as $file) {
+        if (is_file($file)) @unlink($file);
+    }
 }
-function webinar_find($id): ?array
+
+/* ---------- Webinar normalization and authorization ---------- */
+function webinar_text($value, int $maxChars): string
 {
-    foreach (webinars_all() as $w) {
-        if ((string)($w['id'] ?? '') === (string)$id) return $w;
+    if (!is_scalar($value)) return '';
+    $text = (string)$value;
+    $text = preg_replace('/[\\x00-\\x1F\\x7F]/u', ' ', $text);
+    if (function_exists('mb_substr')) return mb_substr($text, 0, $maxChars, 'UTF-8');
+    if (preg_match('/^.{0,' . $maxChars . '}/us', $text, $match)) return $match[0];
+    return substr($text, 0, $maxChars);
+}
+
+function webinar_field(array $source, string $canonical, array $fieldMap)
+{
+    $mapped = $fieldMap[$canonical] ?? $canonical;
+    if (is_string($mapped) && $mapped !== '' && array_key_exists($mapped, $source)) return $source[$mapped];
+    return $source[$canonical] ?? null;
+}
+
+function webinar_normalize(array $source, ?array $fieldMap = null): ?array
+{
+    if ($fieldMap === null) $fieldMap = settings_get()['field_map'] ?? [];
+    $id = webinar_field($source, 'id', $fieldMap);
+    if (!is_scalar($id)) return null;
+    $id = webinar_text($id, 120);
+    if ($id === '') return null;
+
+    $date = webinar_text(webinar_field($source, 'date', $fieldMap), 10);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) return null;
+    $parsedDate = DateTime::createFromFormat('!Y-m-d', $date);
+    if (!$parsedDate || $parsedDate->format('Y-m-d') !== $date) return null;
+
+    $priceValue = webinar_field($source, 'price', $fieldMap);
+    $price = is_numeric($priceValue) ? (float)$priceValue : 0;
+    if (!is_finite($price) || $price < 0) $price = 0;
+    $time = webinar_text(webinar_field($source, 'time', $fieldMap), 5);
+    if ($time !== '' && !preg_match('/^(?:[01]?\d|2[0-3]):[0-5]\d$/', $time)) $time = '';
+
+    return [
+        'id' => $id,
+        'date' => $date,
+        'time' => $time,
+        'speaker' => webinar_text(webinar_field($source, 'speaker', $fieldMap), 240),
+        'title' => webinar_text(webinar_field($source, 'title', $fieldMap), 1200),
+        'price' => min($price, 100000000),
+        'direction' => webinar_text(webinar_field($source, 'direction', $fieldMap), 80),
+        'link_participant' => safe_web_url(webinar_field($source, 'link_participant', $fieldMap)),
+        'link_recording' => safe_web_url($source['link_recording'] ?? ''),
+    ];
+}
+
+function webinar_category_key(array $webinar): string
+{
+    $direction = mb_lower(trim((string)($webinar['direction'] ?? '')));
+    $keys = ['zhkh', 'zdrav', 'electro', 'eco', 'build', 'land', 'goz', 'gas'];
+    if (in_array($direction, $keys, true)) return $direction;
+    $aliases = [
+        'жкх' => 'zhkh',
+        'здрав' => 'zdrav', 'здравоохранение' => 'zdrav', 'медицина' => 'zdrav',
+        'электро' => 'electro', 'электроэнергетика' => 'electro', 'энергетика' => 'electro', 'энерго' => 'electro', 'energy' => 'electro',
+        'экология' => 'eco', 'эко' => 'eco',
+        'строительство' => 'build', 'строй' => 'build',
+        'земля' => 'land',
+        'гоз' => 'goz', 'госрегулирование' => 'goz', 'госзакупки' => 'goz', 'гособоронзаказ' => 'goz',
+        'газ' => 'gas',
+    ];
+    return $aliases[$direction] ?? 'other';
+}
+
+function user_subscription_valid(array $user): bool
+{
+    if (($user['role'] ?? '') === 'admin') return true;
+    $expires = trim((string)($user['expires'] ?? ''));
+    if ($expires === '') return true;
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $expires)) return false;
+    $date = DateTime::createFromFormat('!Y-m-d', $expires);
+    if (!$date || $date->format('Y-m-d') !== $expires) return false;
+    return $expires >= date('Y-m-d');
+}
+
+function user_can_access_webinar(array $user, array $webinar): bool
+{
+    if (($user['active'] ?? true) === false || !user_subscription_valid($user)) return false;
+    if (($user['role'] ?? '') === 'admin') return true;
+    $categories = isset($user['categories']) && is_array($user['categories']) ? $user['categories'] : [];
+    if (in_array('all', $categories, true)) return true;
+    return in_array(webinar_category_key($webinar), $categories, true);
+}
+
+function webinars_visible_to_user(?array $user): array
+{
+    if (!$user || (($user['active'] ?? true) === false) || !user_subscription_valid($user)) return [];
+    $visible = [];
+    $seen = [];
+    $fieldMap = settings_get()['field_map'] ?? [];
+    foreach (webinars_all() as $source) {
+        if (!is_array($source)) continue;
+        $webinar = webinar_normalize($source, $fieldMap);
+        if (!$webinar || isset($seen[$webinar['id']]) || !user_can_access_webinar($user, $webinar)) continue;
+        $seen[$webinar['id']] = true;
+        $visible[] = $webinar;
+        if (count($visible) >= 1000) break;
+    }
+    return $visible;
+}
+
+function webinar_find_for_user($id, ?array $user): ?array
+{
+    if (!is_scalar($id) || !$user) return null;
+    $needle = (string)$id;
+    if ($needle === '' || strlen($needle) > 120) return null;
+    $fieldMap = settings_get()['field_map'] ?? [];
+    foreach (webinars_all() as $source) {
+        if (!is_array($source)) continue;
+        $webinar = webinar_normalize($source, $fieldMap);
+        if ($webinar && $webinar['id'] === $needle && user_can_access_webinar($user, $webinar)) return $webinar;
     }
     return null;
+}
+
+/** Backwards-compatible safe lookup; callers must still require a session. */
+function webinar_find($id): ?array
+{
+    if (!function_exists('current_user')) return null;
+    return webinar_find_for_user($id, current_user());
 }

@@ -1,0 +1,14 @@
+# Runtime data and secrets
+/data/users.json
+/data/settings.json
+/data/logs/*
+/data/.app_secret
+/data/.rate_limits.json
+/data/.webinars_cache*.json
+/data/*.tmp
+!/data/logs/.gitkeep
+
+# Local development / test output
+/.phpunit.cache/
+/.phpunit.result.cache
+*.coverage

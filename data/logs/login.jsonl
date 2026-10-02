@@ -1,8 +1,0 @@
-{"login":"zdrv","ok":false,"reason":"bad_credentials","ip":"147.45.222.198","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0","ts":"2026-07-16T13:21:26+03:00"}
-{"login":"zdrv","ok":false,"reason":"bad_credentials","ip":"147.45.222.198","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0","ts":"2026-07-16T13:21:30+03:00"}
-{"login":"zdrv","ok":false,"reason":"bad_credentials","ip":"147.45.222.198","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0","ts":"2026-07-16T13:21:32+03:00"}
-{"login":"admin","ok":true,"reason":"","ip":"147.45.222.198","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0","ts":"2026-07-16T13:21:36+03:00"}
-{"login":"123","ok":true,"reason":"","ip":"147.45.222.198","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0","ts":"2026-07-16T13:22:36+03:00"}
-{"login":"admin","ok":true,"reason":"","ip":"194.187.149.237","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 OPR/132.0.0.0","ts":"2026-07-19T20:20:34+03:00"}
-{"login":"admin","ok":true,"reason":"","ip":"185.138.201.55","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0","ts":"2026-08-04T09:02:40+03:00"}
-{"login":"admin","ok":true,"reason":"","ip":"185.138.201.55","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 OPR/132.0.0.0","ts":"2026-10-01T12:49:42+03:00"}

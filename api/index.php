@@ -1,8 +1,5 @@
 <?php
-/**
- * Единая точка входа API. Все действия — через ?action=...
- * Отвечает только JSON. Все изменения защищены CSRF-токеном и проверкой ролей.
- */
+/** Single JSON API entry point. Every route has an explicit HTTP method and authorization policy. */
 declare(strict_types=1);
 
 require_once __DIR__ . '/../config.php';
@@ -12,14 +9,56 @@ require_once BASE_DIR . '/lib/logs.php';
 
 send_security_headers();
 secure_session_start();
-log_maybe_autoprune();   // ленивая авто-очистка логов (не чаще раза в сутки)
 
 $action = $_GET['action'] ?? '';
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+if (!is_string($action) || $action === '') {
+    json_response(['ok' => false, 'error' => 'Неизвестное действие.'], 404);
+}
 
-// Для всех изменяющих запросов — обязательная проверка CSRF
-$mutating = in_array($method, ['POST', 'PUT', 'DELETE'], true);
-if ($mutating && $action !== 'login') {
+$actionMethods = [
+    'me' => ['GET'],
+    'login' => ['POST'],
+    'logout' => ['POST'],
+    'webinars' => ['GET'],
+    'webinars_refresh' => ['POST'],
+    'log_view' => ['POST'],
+    'my_views' => ['GET'],
+    'users_list' => ['GET'],
+    'user_save' => ['POST'],
+    'user_delete' => ['POST'],
+    'users_bulk_preview' => ['POST'],
+    'users_bulk_create' => ['POST'],
+    'settings_get' => ['GET'],
+    'settings_save' => ['POST'],
+    'features_save' => ['POST'],
+    'colfonts_save' => ['POST'],
+    'colwidths_save' => ['POST'],
+    'view_save' => ['POST'],
+    'columns_save' => ['POST'],
+    'fieldmap_save' => ['POST'],
+    'catoverrides_save' => ['POST'],
+    'presets_save' => ['POST'],
+    'retention_save' => ['POST'],
+    'logs_prune_now' => ['POST'],
+    'logs_clear' => ['POST'],
+    'config_export' => ['GET'],
+    'config_import' => ['POST'],
+    'logs_summary' => ['GET'],
+    'logs_list' => ['GET'],
+    'logs_export' => ['GET'],
+    'user_views' => ['GET'],
+    'smtp_test' => ['POST'],
+    'mail_preview' => ['POST'],
+    'mail_send' => ['POST'],
+];
+if (!isset($actionMethods[$action])) {
+    json_response(['ok' => false, 'error' => 'Неизвестное действие.'], 404);
+}
+require_method($method, $actionMethods[$action]);
+
+// All POST routes, including login, require the token tied to the current session.
+if ($method !== 'GET') {
     $body = read_json_body();
     $token = $body['csrf'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
     if (!csrf_check($token)) {
@@ -27,115 +66,123 @@ if ($mutating && $action !== 'login') {
     }
     $GLOBALS['__body'] = $body;
 }
+if (is_logged_in()) log_maybe_autoprune();
+
+function respond_with_webinars(): void
+{
+    require_login();
+    $user = current_user();
+    $login = (string)($user['login'] ?? '');
+    $seen = feature_on('log_views') ? user_view_summary($login) : [];
+    json_response([
+        'ok' => true,
+        'webinars' => webinars_visible_to_user($user),
+        'cabinet' => CABINET_BASE,
+        'my_views' => array_map(function ($view) {
+            return (string)($view['webinar_id'] ?? '');
+        }, $seen),
+    ]);
+}
 
 switch ($action) {
-
-    /* ---------- Текущий статус сессии + CSRF ---------- */
     case 'me':
-        $s = settings_get();
+        $user = current_user();
+        $settings = settings_get();
         json_response([
             'ok' => true,
-            'authenticated' => is_logged_in(),
-            'user' => is_logged_in() ? user_public(current_user()) : null,
+            'authenticated' => $user !== null,
+            'user' => $user !== null ? user_public($user) : null,
+            'setup_required' => count(users_all()) === 0,
             'csrf' => csrf_token(),
             'brand' => ['short' => BRAND_SHORT, 'full' => BRAND_FULL],
-            'features' => $s['features'] ?? [],
-            'show_past' => $s['show_past'] ?? true,
-            'col_fonts' => $s['col_fonts'] ?? [],
-            'col_widths' => $s['col_widths'] ?? [],
-            'view' => $s['view'] ?? [],
-            'columns' => $s['columns'] ?? [],
-            'field_map' => $s['field_map'] ?? [],
-            'cat_overrides' => $s['cat_overrides'] ?? [],
-            'presets' => $s['presets'] ?? [],
+            'features' => $settings['features'] ?? [],
+            'show_past' => $settings['show_past'] ?? true,
+            'col_fonts' => $settings['col_fonts'] ?? [],
+            'col_widths' => $settings['col_widths'] ?? [],
+            'view' => $settings['view'] ?? [],
+            'columns' => $settings['columns'] ?? [],
+            'field_map' => $settings['field_map'] ?? [],
+            'cat_overrides' => $settings['cat_overrides'] ?? [],
+            'presets' => $settings['presets'] ?? [],
         ]);
         break;
 
-    /* ---------- Вход ---------- */
     case 'login':
-        if ($method !== 'POST') json_response(['ok' => false, 'error' => 'Method not allowed'], 405);
-        // Защита от перебора: не более 5 попыток за 5 минут на сессию
-        if (!rate_limit('login', 5, 300)) {
+        $body = $GLOBALS['__body'] ?? [];
+        $login = trim((string)($body['login'] ?? ''));
+        if (strlen($login) > 80) $login = '';
+        $password = (string)($body['password'] ?? '');
+        if (strlen($password) > 1024) $password = 'invalid-password-too-long';
+        if (!rate_limit('login', 8, 300)) {
             json_response(['ok' => false, 'error' => 'Слишком много попыток. Повторите через несколько минут.'], 429);
         }
-        $body = read_json_body();
-        $login = trim((string)($body['login'] ?? ''));
-        $pass  = (string)($body['password'] ?? '');
-        $u = users_find($login);
-        // Постоянное время: всегда выполняем verify, даже если юзера нет
-        $hash = $u['password_hash'] ?? password_hash('dummy', PASSWORD_DEFAULT);
-        $valid = password_verify($pass, $hash);
-        if (!$u || !$valid) {
+        $user = users_find($login);
+        static $dummyHash = null;
+        if ($dummyHash === null) $dummyHash = password_hash('not-a-real-password', PASSWORD_DEFAULT);
+        $hash = is_array($user) ? (string)($user['password_hash'] ?? '') : '';
+        $valid = password_verify($password, $hash !== '' ? $hash : $dummyHash);
+        if (!$user || !$valid) {
             log_login($login, false, 'bad_credentials');
             json_response(['ok' => false, 'error' => 'Неверный логин или пароль.'], 401);
         }
-        if (($u['active'] ?? true) === false) {
+        if (($user['active'] ?? true) === false) {
             log_login($login, false, 'disabled');
             json_response(['ok' => false, 'error' => 'Аккаунт отключён. Обратитесь к администратору.'], 403);
         }
         session_regenerate_id(true);
-        user_touch_login($login);
-        // подтягиваем свежие поля (last_login и т.п.)
-        $u = users_find($login) ?? $u;
-        $_SESSION['user'] = $u;
-        log_login($login, true);
-        json_response(['ok' => true, 'user' => user_public($u), 'csrf' => csrf_token()]);
+        // Rotate the pre-authentication CSRF token together with the session ID.
+        $_SESSION['csrf'] = bin2hex(random_bytes(32));
+        $_SESSION['__csrf_created'] = time();
+        user_touch_login((string)$user['login']);
+        $user = users_find((string)$user['login']) ?? $user;
+        $_SESSION['user'] = $user;
+        $_SESSION['__auth_hash'] = (string)($user['password_hash'] ?? '');
+        log_login((string)$user['login'], true);
+        json_response(['ok' => true, 'user' => user_public($user), 'csrf' => csrf_token()]);
         break;
 
-    /* ---------- Выход ---------- */
     case 'logout':
         $_SESSION = [];
-        session_destroy();
-        json_response(['ok' => true]);
+        session_regenerate_id(true);
+        $_SESSION['__started'] = true;
+        $_SESSION['__ua'] = hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
+        $_SESSION['__last_activity'] = time();
+        $_SESSION['__csrf_created'] = time();
+        json_response(['ok' => true, 'csrf' => csrf_token()]);
         break;
 
-    /* ---------- Список вебинаров (для вошедших) ---------- */
     case 'webinars':
-        require_login();
-        // ?fresh=1 — принудительно сбросить кэш внешнего источника (кнопка «Обновить»)
-        if (($_GET['fresh'] ?? '') === '1') webinars_cache_clear();
-        // Применяем сопоставление полей: приводим внешний JSON к каноническим ключам
-        $fmap = settings_get()['field_map'] ?? [];
-        $list = array_map(function ($w) use ($fmap) {
-            if (!is_array($w)) return $w;
-            $out = $w;   // сохраняем исходные поля тоже
-            foreach ($fmap as $canon => $srcKey) {
-                if ($srcKey && $srcKey !== $canon && array_key_exists($srcKey, $w)) {
-                    $out[$canon] = $w[$srcKey];
-                }
-            }
-            return $out;
-        }, webinars_all());
-        json_response([
-            'ok' => true,
-            'webinars' => $list,
-            'cabinet' => CABINET_BASE,
-            'my_views' => array_map(fn($v) => (string)$v['webinar_id'], user_view_summary((current_user()['login'] ?? ''))),
-        ]);
+        respond_with_webinars();
         break;
 
-    /* ---------- Зафиксировать просмотр вебинара (клик «Смотреть») ---------- */
+    case 'webinars_refresh':
+        require_login();
+        webinars_cache_clear();
+        respond_with_webinars();
+        break;
+
     case 'log_view':
         require_login();
-        $b = $GLOBALS['__body'] ?? [];
-        $w = webinar_find($b['webinar_id'] ?? null);
-        if (!$w) json_response(['ok' => false, 'error' => 'Вебинар не найден.'], 404);
-        log_view((string)(current_user()['login'] ?? ''), $w['id'] ?? '', (string)($w['title'] ?? ''), 'watch');
-        json_response(['ok' => true]);
+        $body = $GLOBALS['__body'] ?? [];
+        $user = current_user();
+        $webinar = webinar_find_for_user($body['webinar_id'] ?? null, $user);
+        if (!$webinar) json_response(['ok' => false, 'error' => 'Вебинар не найден.'], 404);
+        if (!feature_on('log_views')) json_response(['ok' => true, 'logged' => false]);
+        log_view((string)($user['login'] ?? ''), $webinar['id'], $webinar['title'], 'watch');
+        json_response(['ok' => true, 'logged' => true]);
         break;
 
-    /* ---------- Мои просмотры (пользователь видит свою историю) ---------- */
     case 'my_views':
         require_login();
+        $user = current_user();
         if (!feature_on('my_views') && !is_admin()) {
             json_response(['ok' => false, 'error' => 'Раздел отключён администратором.'], 403);
         }
-        $login = (string)(current_user()['login'] ?? '');
-        json_response(['ok' => true, 'views' => user_view_summary($login), 'user' => user_public(current_user())]);
+        $login = (string)($user['login'] ?? '');
+        json_response(['ok' => true, 'views' => user_view_summary($login), 'user' => user_public($user)]);
         break;
 
     default:
-        // Делегируем в модули (каждый обрабатывает свои действия и вызывает json_response при совпадении)
         require_once BASE_DIR . '/api/users.php';
         require_once BASE_DIR . '/api/mail.php';
         require_once BASE_DIR . '/api/settings.php';
@@ -144,5 +191,5 @@ switch ($action) {
         handle_settings_action($action, $method);
         handle_mail_action($action, $method);
         handle_logs_action($action, $method);
-        json_response(['ok' => false, 'error' => 'Неизвестное действие: ' . h($action)], 404);
+        json_response(['ok' => false, 'error' => 'Неизвестное действие.'], 404);
 }

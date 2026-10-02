@@ -1,0 +1,3 @@
+# Administrative utilities are CLI-only.
+Options -Indexes
+Require all denied

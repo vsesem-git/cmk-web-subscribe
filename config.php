@@ -39,13 +39,71 @@ function app_base_path(): string
     $dir = rtrim($dir, '/') . '/';
     return $dir === '//' ? '/' : $dir;
 }
+function request_is_https(): bool
+{
+    if (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off') {
+        return true;
+    }
+    // Proxy headers are trusted only when explicitly enabled in the server environment.
+    if (getenv('CMK_TRUST_PROXY') === '1') {
+        $forwarded = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+        return $forwarded === 'https';
+    }
+    return false;
+}
+
 function app_base_url(): string
 {
-    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-    $scheme = $https ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $scheme = request_is_https() ? 'https' : 'http';
+    $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+    // Never reflect an arbitrary Host header into an absolute URL.
+    if (!preg_match('/\\A(?:\\[[0-9a-f:.]+\\]|[a-z0-9.-]+)(?::[0-9]{1,5})?\\z/i', $host)) {
+        $host = 'localhost';
+    }
     return $scheme . '://' . $host . app_base_path();
+}
+
+/**
+ * Use a deployment-provided secret when available, otherwise create a private,
+ * persistent secret file on first start. This keeps secrets out of source control.
+ */
+function app_secret(): string
+{
+    $configured = getenv('CMK_APP_SECRET');
+    if ($configured !== false && $configured !== '') {
+        if (strlen($configured) < 64) {
+            throw new RuntimeException('CMK_APP_SECRET must contain at least 64 characters.');
+        }
+        return $configured;
+    }
+
+    $path = DATA_DIR . '/.app_secret';
+    if (is_file($path)) {
+        $secret = trim((string)@file_get_contents($path));
+        if (strlen($secret) >= 64) return $secret;
+        throw new RuntimeException('The application secret file is invalid.');
+    }
+    if (!is_dir(DATA_DIR) && !@mkdir(DATA_DIR, 0700, true) && !is_dir(DATA_DIR)) {
+        throw new RuntimeException('The data directory is not writable; configure CMK_APP_SECRET.');
+    }
+
+    $secret = bin2hex(random_bytes(32));
+    $handle = @fopen($path, 'x');
+    if ($handle !== false) {
+        @chmod($path, 0600);
+        $written = fwrite($handle, $secret);
+        fclose($handle);
+        if ($written === strlen($secret)) return $secret;
+        @unlink($path);
+        throw new RuntimeException('Could not persist the application secret.');
+    }
+
+    // Another worker may have created the file at the same time.
+    if (is_file($path)) {
+        $secret = trim((string)@file_get_contents($path));
+        if (strlen($secret) >= 64) return $secret;
+    }
+    throw new RuntimeException('Could not initialize the application secret.');
 }
 
 /**
@@ -67,11 +125,19 @@ function asset(string $relPath): string
 }
 
 
-// --- Секрет для подписи сессий/CSRF. ОБЯЗАТЕЛЬНО замените на свой! ---
-define('APP_SECRET', 'ЗАМЕНИТЕ_ЭТУ_СТРОКУ_НА_СЛУЧАЙНУЮ_64_СИМВОЛА_ABCdef1234567890');
+// Секрет создаётся автоматически в закрытом файле data/.app_secret либо задаётся через окружение.
+define('APP_SECRET', app_secret());
 
 // --- Параметры кабинета вебинара (для ссылок в письмах) ---
-define('CABINET_BASE', 'https://edu.vsesem.ru/webinar/');
+$cabinetBase = getenv('CMK_CABINET_BASE');
+$cabinetBase = ($cabinetBase !== false && $cabinetBase !== '') ? trim($cabinetBase) : 'https://edu.vsesem.ru/webinar/';
+$cabinetParts = @parse_url($cabinetBase);
+if (!is_array($cabinetParts) || strtolower((string)($cabinetParts['scheme'] ?? '')) !== 'https'
+    || empty($cabinetParts['host']) || isset($cabinetParts['user']) || isset($cabinetParts['pass'])
+    || preg_match('/[\\r\\n\\x00]/', $cabinetBase)) {
+    throw new RuntimeException('CMK_CABINET_BASE must be a valid HTTPS URL.');
+}
+define('CABINET_BASE', rtrim($cabinetBase, '/') . '/');
 
 // --- Кэш внешнего источника вебинаров (сек). 0 = без кэша (каждый раз свежее). ---
 define('WEBINARS_CACHE_TTL', 30);
@@ -85,11 +151,13 @@ define('MAIL_FROM_NAME', 'ЦМК-Подписка');
 date_default_timezone_set('Europe/Moscow');
 
 // --- Флаги безопасности cookie сессии ---
-$secureCookie = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+ini_set('session.use_strict_mode', '1');
+ini_set('session.use_only_cookies', '1');
+ini_set('session.use_trans_sid', '0');
 session_set_cookie_params([
     'lifetime' => 0,
-    'path'     => '/',
+    'path'     => app_base_path(),
     'httponly' => true,
-    'secure'   => $secureCookie,
+    'secure'   => request_is_https(),
     'samesite' => 'Strict',
 ]);

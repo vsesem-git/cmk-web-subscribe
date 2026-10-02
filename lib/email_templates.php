@@ -70,7 +70,7 @@ function build_access_email(array $w, ?array $creds = null): string
     $date = h(ru_date((string)$w['date']));
     $speaker = h((string)($w['speaker'] ?? ''));
     $title = h((string)($w['title'] ?? ''));
-    $link = (string)($w['link_participant'] ?? '');
+    $link = safe_web_url($w['link_participant'] ?? '');
     $cabinet = CABINET_BASE . rawurlencode((string)($w['id'] ?? ''));
     $price = (int)($w['price'] ?? 0);
 
@@ -108,7 +108,7 @@ function build_invite_email(array $w): string
     $date = h(ru_date((string)$w['date']));
     $speaker = h((string)($w['speaker'] ?? ''));
     $title = h((string)($w['title'] ?? ''));
-    $link = (string)($w['link_participant'] ?? '');
+    $link = safe_web_url($w['link_participant'] ?? '');
     $cabinet = CABINET_BASE . rawurlencode((string)($w['id'] ?? ''));
 
     $inner = '<div style="display:inline-block;background:#FCEAF1;color:#A8285A;font-size:12px;font-weight:800;'
